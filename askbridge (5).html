@@ -1,0 +1,2118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AskBridge - 先生への質問・相談管理ツール</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4F46E5', // Indigo 600
+                        primaryHover: '#4338CA', // Indigo 700
+                        secondary: '#10B981', // Emerald 500
+                        dark: '#1E293B',
+                        light: '#F8FAFC'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #F1F5F9; color: #334155; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, addDoc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'askbridge-app';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "demo-key",
+            authDomain: "demo.firebaseapp.com",
+            projectId: "demo-project",
+            storageBucket: "demo.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:123456"
+        };
+
+        let db = null;
+        let auth = null;
+        let isFirebaseAvailable = false;
+
+        try {
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            isFirebaseAvailable = true;
+        } catch(e) {
+            console.warn("[Firebase Initializer] Falling back to LocalStorage mode:", e);
+        }
+
+        // Global state listeners for LocalStorage fallback
+        const localListeners = {};
+        const triggerLocalUpdate = (colName) => {
+            if (localListeners[colName]) {
+                const data = JSON.parse(localStorage.getItem(`askbridge_data_${colName}`) || '[]');
+                localListeners[colName].forEach(cb => cb(data));
+            }
+        };
+
+        // Prepopulate default demo data if empty
+        const initDefaultData = () => {
+            if (!localStorage.getItem('askbridge_data_teachers')) {
+                const teachers = [
+                    { id: 'teacher_1', name: '山田先生' },
+                    { id: 'teacher_2', name: '佐藤先生' },
+                    { id: 'teacher_3', name: '鈴木先生' }
+                ];
+                localStorage.setItem('askbridge_data_teachers', JSON.stringify(teachers));
+            }
+
+            if (!localStorage.getItem('askbridge_data_slots')) {
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                const dateStr = tomorrow.toISOString().split('T')[0];
+                const slots = [
+                    { id: 'slot_1', teacher: '山田先生', date: dateStr, time: '10:00 - 11:00', available: true },
+                    { id: 'slot_2', teacher: '佐藤先生', date: dateStr, time: '13:00 - 14:00', available: true },
+                    { id: 'slot_3', teacher: '鈴木先生', date: dateStr, time: '15:00 - 16:00', available: true }
+                ];
+                localStorage.setItem('askbridge_data_slots', JSON.stringify(slots));
+            }
+
+            if (!localStorage.getItem('askbridge_data_qas')) {
+                const qas = [
+                    {
+                        id: 'qa_1',
+                        title: 'ReactのuseEffectで無限ループが発生してしまいます',
+                        category: 'React',
+                        question: 'useEffectの中でstateを更新すると無限ループになります。どのように回避すればよいでしょうか？',
+                        answer: 'useEffectの第二引数（依存配列）を設定してください。空配列 [] を指定すると初回マウント時のみ実行され、特定の変数を指定するとその値の変更時のみ実行されます。',
+                        teacher: '山田先生',
+                        date: '2026-10-10',
+                        likes: 5
+                    },
+                    {
+                        id: 'qa_2',
+                        title: 'JavaでのNullPointerExceptionの防ぎ方',
+                        category: 'Java',
+                        question: 'プログラム実行中にNullPointerExceptionが頻発します。適切な対策を教えてください。',
+                        answer: '変数参照前の if (obj != null) チェックや、java.util.Optionalの活用、またメソッド引数・戻り値のNullガードを徹底しましょう。',
+                        teacher: '佐藤先生',
+                        date: '2026-10-12',
+                        likes: 8
+                    }
+                ];
+                localStorage.setItem('askbridge_data_qas', JSON.stringify(qas));
+            }
+        };
+
+        initDefaultData();
+
+        window.firebaseAuthReady = new Promise((resolve) => {
+            if (isFirebaseAvailable && auth) {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    signInWithCustomToken(auth, __initial_auth_token)
+                        .then(resolve)
+                        .catch(() => signInAnonymously(auth).then(resolve).catch(resolve));
+                } else {
+                    signInAnonymously(auth).then(resolve).catch(resolve);
+                }
+            } else {
+                resolve();
+            }
+        });
+
+        // Universal Hybrid DB Services (Firestore + LocalStorage Fallback)
+        window.dbServices = {
+            subscribe: (colName, callback) => {
+                let unsubFirestore = null;
+                if (isFirebaseAvailable && db) {
+                    try {
+                        const colRef = collection(db, 'artifacts', appId, 'public', 'data', colName);
+                        unsubFirestore = onSnapshot(colRef, (snapshot) => {
+                            const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                            callback(data);
+                        }, (err) => {
+                            console.warn(`[Firestore Sync Warning] ${colName}:`, err);
+                            const localData = JSON.parse(localStorage.getItem(`askbridge_data_${colName}`) || '[]');
+                            callback(localData);
+                        });
+                    } catch(e) {
+                        const localData = JSON.parse(localStorage.getItem(`askbridge_data_${colName}`) || '[]');
+                        callback(localData);
+                    }
+                } else {
+                    const localData = JSON.parse(localStorage.getItem(`askbridge_data_${colName}`) || '[]');
+                    callback(localData);
+                }
+
+                if (!localListeners[colName]) localListeners[colName] = [];
+                localListeners[colName].push(callback);
+
+                return () => {
+                    if (unsubFirestore) unsubFirestore();
+                    if (localListeners[colName]) {
+                        localListeners[colName] = localListeners[colName].filter(cb => cb !== callback);
+                    }
+                };
+            },
+            set: async (colName, docId, data) => {
+                const localData = JSON.parse(localStorage.getItem(`askbridge_data_${colName}`) || '[]');
+                const index = localData.findIndex(item => item.id === docId);
+                if (index >= 0) localData[index] = { ...localData[index], ...data };
+                else localData.push({ id: docId, ...data });
+                localStorage.setItem(`askbridge_data_${colName}`, JSON.stringify(localData));
+                triggerLocalUpdate(colName);
+
+                if (isFirebaseAvailable && db) {
+                    try {
+                        if (window.firebaseAuthReady) await window.firebaseAuthReady;
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, String(docId));
+                        await setDoc(docRef, data, { merge: true });
+                    } catch(e) { console.warn('Firestore set fallback applied:', e); }
+                }
+            },
+            add: async (colName, data) => {
+                const newId = `${colName}_${Date.now()}`;
+                await window.dbServices.set(colName, newId, { id: newId, ...data });
+                return newId;
+            },
+            update: async (colName, docId, data) => {
+                await window.dbServices.set(colName, docId, data);
+            },
+            delete: async (colName, docId) => {
+                const localData = JSON.parse(localStorage.getItem(`askbridge_data_${colName}`) || '[]');
+                const filtered = localData.filter(item => item.id !== docId);
+                localStorage.setItem(`askbridge_data_${colName}`, JSON.stringify(filtered));
+                triggerLocalUpdate(colName);
+
+                if (isFirebaseAvailable && db) {
+                    try {
+                        if (window.firebaseAuthReady) await window.firebaseAuthReady;
+                        const docRef = doc(db, 'artifacts', appId, 'public', 'data', colName, String(docId));
+                        await deleteDoc(docRef);
+                    } catch(e) { console.warn('Firestore delete fallback applied:', e); }
+                }
+            }
+        };
+
+        window.addEventListener('storage', (e) => {
+            if (e.key && e.key.startsWith('askbridge_data_')) {
+                const colName = e.key.replace('askbridge_data_', '');
+                triggerLocalUpdate(colName);
+            }
+        });
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const generateGoogleCalendarUrl = (title, date, time, details) => {
+            try {
+                const [startTimeStr, endTimeStr] = time.split(" - ");
+                const startDate = new Date(`${date}T${startTimeStr}:00`);
+                const endDate = new Date(`${date}T${endTimeStr}:00`);
+                
+                const format = (d) => {
+                    const pad = (n) => n.toString().padStart(2, '0');
+                    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+                };
+                
+                const baseUrl = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+                const text = encodeURIComponent(title);
+                const dates = `${format(startDate)}/${format(endDate)}`;
+                const detailsEncoded = encodeURIComponent(details || "詳細なし");
+                
+                return `${baseUrl}&text=${text}&dates=${dates}&details=${detailsEncoded}`;
+            } catch (e) {
+                return "#";
+            }
+        };
+
+        const Badge = ({ children, color = "blue" }) => {
+            const colors = {
+                blue: "bg-blue-100 text-blue-800",
+                green: "bg-emerald-100 text-emerald-800",
+                yellow: "bg-amber-100 text-amber-800",
+                gray: "bg-slate-100 text-slate-800",
+                purple: "bg-purple-100 text-purple-800",
+                amber: "bg-amber-100 text-amber-800",
+                red: "bg-red-100 text-red-800"
+            };
+            return (
+                <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${colors[color] || colors.blue}`}>
+                    {children}
+                </span>
+            );
+        };
+
+        const Button = ({ children, onClick, variant = "primary", className = "", disabled = false, type = "button" }) => {
+            const baseStyle = "px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center gap-2 active:scale-95";
+            const variants = {
+                primary: "bg-primary text-white hover:bg-primaryHover disabled:bg-indigo-300 shadow-sm",
+                outline: "border-2 border-primary text-primary hover:bg-indigo-50 disabled:border-indigo-300 disabled:text-indigo-300",
+                danger: "bg-red-500 text-white hover:bg-red-600 disabled:bg-red-300 shadow-sm",
+                ghost: "text-slate-600 hover:bg-slate-100 disabled:text-slate-400"
+            };
+            return (
+                <button 
+                    type={type}
+                    onClick={onClick} 
+                    disabled={disabled}
+                    className={`${baseStyle} ${variants[variant]} ${className} ${disabled ? 'cursor-not-allowed active:scale-100' : ''}`}
+                >
+                    {children}
+                </button>
+            );
+        };
+
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 fade-in p-4">
+                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+                        <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
+                            <h3 className="text-lg font-bold text-slate-800">{title}</h3>
+                            <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+                                <i className="ph ph-x text-xl"></i>
+                            </button>
+                        </div>
+                        <div className="p-6">
+                            {children}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const MyPageView = ({ currentUser, reservations, questions, onDeleteReservation, onDeleteQuestion, onRequireLogin }) => {
+            const [activeSubTab, setActiveSubTab] = useState("reservations");
+
+            if (!currentUser) {
+                return (
+                    <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-slate-200">
+                        <i className="ph ph-user-circle text-6xl text-slate-300 mb-4"></i>
+                        <h2 className="text-xl font-bold text-slate-800 mb-2">ログインが必要です</h2>
+                        <p className="text-slate-500 max-w-md mx-auto mb-6 text-sm">
+                            自分の予約履歴や質問履歴を確認するには、右上の「ログイン / 登録」ボタンからお名前を入力してください。
+                        </p>
+                        <Button variant="primary" className="mx-auto" onClick={onRequireLogin}>
+                            ログイン / アカウント作成
+                        </Button>
+                    </div>
+                );
+            }
+
+            const myReservations = reservations.filter(r => r.studentEmail === currentUser.email || r.studentId === currentUser.id);
+            const myQuestions = questions.filter(q => q.studentEmail === currentUser.email || q.studentId === currentUser.id);
+
+            return (
+                <div className="fade-in space-y-6">
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col sm:flex-row items-center gap-4">
+                        <div className="w-16 h-16 rounded-full bg-indigo-100 text-primary font-bold text-2xl flex items-center justify-center border-2 border-primary">
+                            {currentUser.name.charAt(0)}
+                        </div>
+                        <div className="text-center sm:text-left flex-1">
+                            <div className="flex items-center justify-center sm:justify-start gap-2">
+                                <h2 className="text-xl font-bold text-slate-800">{currentUser.name}</h2>
+                                <Badge color="purple">学生アカウント</Badge>
+                            </div>
+                            <p className="text-slate-500 text-sm">{currentUser.email || "メール未登録"}</p>
+                        </div>
+                        <div className="flex gap-4 text-center border-t sm:border-t-0 sm:border-l border-slate-100 pt-3 sm:pt-0 sm:pl-6">
+                            <div>
+                                <span className="block text-2xl font-black text-primary">{myReservations.length}</span>
+                                <span className="text-xs text-slate-400 font-medium">面談予約</span>
+                            </div>
+                            <div>
+                                <span className="block text-2xl font-black text-primary">{myQuestions.length}</span>
+                                <span className="text-xs text-slate-400 font-medium">質問件数</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex border-b border-slate-200">
+                        <button 
+                            onClick={() => setActiveSubTab("reservations")}
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeSubTab === "reservations" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                        >
+                            <i className="ph ph-calendar text-lg"></i> 自分の面談予約 ({myReservations.length})
+                        </button>
+                        <button 
+                            onClick={() => setActiveSubTab("questions")}
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 ${activeSubTab === "questions" ? "border-transparent text-slate-500 hover:text-slate-700" : "border-primary text-primary"}`}
+                        >
+                            <i className="ph ph-chat-teardrop-text text-lg"></i> 自分の質問履歴 ({myQuestions.length})
+                        </button>
+                    </div>
+
+                    {activeSubTab === "reservations" && (
+                        <div className="space-y-4">
+                            {myReservations.length === 0 ? (
+                                <div className="text-center py-12 bg-white rounded-xl border border-slate-200 text-slate-500 text-sm">
+                                    まだ面談の予約はありません。「先生に質問・予約する」タブから予約が行えます。
+                                </div>
+                            ) : (
+                                myReservations.map(res => (
+                                    <div key={res.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                        <div className="space-y-2 flex-1">
+                                            <div className="flex items-center gap-2">
+                                                {res.status === 'pending' && <Badge color="yellow">承認待ち</Badge>}
+                                                {res.status === 'approved' && <Badge color="green">予約確定 (承認済み)</Badge>}
+                                                {res.status === 'completed' && <Badge color="gray">面談終了</Badge>}
+                                                <span className="font-bold text-slate-800 text-sm flex items-center gap-1">
+                                                    <i className="ph ph-user"></i> 担当: {res.teacher}
+                                                </span>
+                                            </div>
+                                            <div className="text-slate-700 text-sm flex items-center gap-3 font-medium">
+                                                <span className="flex items-center gap-1"><i className="ph ph-calendar-blank text-primary"></i> 日時: {res.datetime}</span>
+                                            </div>
+                                            <div className="bg-slate-50 p-3 rounded-lg text-xs text-slate-600 border border-slate-100 whitespace-pre-wrap">
+                                                <strong>事前相談内容:</strong> {res.topic}
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
+                                            {res.status === 'approved' && (
+                                                <a 
+                                                    href={generateGoogleCalendarUrl(`面談: ${res.teacher}`, res.datetime.split(' ')[0], res.reservedTime || "10:00 - 11:00", res.topic)}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="px-3 py-2 rounded-lg font-medium transition-colors duration-200 flex items-center justify-center gap-1.5 border border-[#4285F4] text-[#4285F4] hover:bg-blue-50 text-xs"
+                                                >
+                                                    <i className="ph ph-calendar text-base"></i> Googleカレンダーに登録
+                                                </a>
+                                            )}
+                                            <Button variant="danger" className="text-xs py-2 px-3" onClick={() => onDeleteReservation(res.id)}>
+                                                <i className="ph ph-trash"></i> 予約取消
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+
+                    {activeSubTab === "questions" && (
+                        <div className="space-y-4">
+                            {myQuestions.length === 0 ? (
+                                <div className="text-center py-12 bg-white rounded-xl border border-slate-200 text-slate-500 text-sm">
+                                    まだ送信した質問はありません。
+                                </div>
+                            ) : (
+                                myQuestions.map(q => (
+                                    <div key={q.id} className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                                        <div className="flex justify-between items-start gap-4">
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    {q.status === 'pending' ? <Badge color="yellow">先生の回答待ち</Badge> : <Badge color="green">回答済み (Q&A掲載中)</Badge>}
+                                                    <Badge color="blue">{q.category}</Badge>
+                                                    <span className="text-xs text-slate-400"><i className="ph ph-clock"></i> {q.date}</span>
+                                                </div>
+                                                <h3 className="font-bold text-slate-800 text-base">{q.title}</h3>
+                                                <p className="text-xs text-slate-500">質問先: {q.teacher}</p>
+                                            </div>
+                                            <Button variant="ghost" className="text-red-500 hover:bg-red-50 text-xs py-1 px-2" onClick={() => onDeleteQuestion(q.id)}>
+                                                <i className="ph ph-trash"></i> 削除
+                                            </Button>
+                                        </div>
+
+                                        <div className="bg-slate-50 p-3 rounded-lg text-sm text-slate-700 whitespace-pre-wrap border border-slate-100">
+                                            {q.question}
+                                        </div>
+
+                                        {q.status === 'answered' && (
+                                            <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-slate-800 text-sm space-y-1">
+                                                <p className="font-bold text-emerald-800 flex items-center gap-1.5 text-xs">
+                                                    <i className="ph-fill ph-check-circle text-emerald-600 text-base"></i> {q.teacher}からの回答
+                                                </p>
+                                                <p className="whitespace-pre-wrap text-slate-700">{q.answer}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const QAView = ({ qas, onLike, likedQaIds }) => {
+            const [searchTerm, setSearchTerm] = useState("");
+            
+            const filteredQas = useMemo(() => {
+                let result = qas;
+                if (searchTerm.trim()) {
+                    const lowerSearch = searchTerm.toLowerCase();
+                    result = result.filter(qa => 
+                        qa.title?.toLowerCase().includes(lowerSearch) || 
+                        qa.question?.toLowerCase().includes(lowerSearch) ||
+                        qa.answer?.toLowerCase().includes(lowerSearch) ||
+                        qa.category?.toLowerCase().includes(lowerSearch)
+                    );
+                }
+                return [...result].sort((a, b) => (b.likes || 0) - (a.likes || 0));
+            }, [qas, searchTerm]);
+
+            return (
+                <div className="fade-in">
+                    <div className="bg-gradient-to-r from-primary to-indigo-700 text-white p-8 rounded-2xl shadow-lg mb-8 relative overflow-hidden">
+                        <div className="relative z-10">
+                            <h2 className="text-3xl font-black mb-2 tracking-tight">Q&A ナレッジベース</h2>
+                            <p className="text-indigo-100 mb-6 max-w-xl">過去の質問や解決済みの相談内容を検索して、自己解決に役立てましょう。</p>
+                            <div className="relative max-w-2xl">
+                                <input 
+                                    type="text" 
+                                    placeholder="キーワードで検索 (例: Java, React, エラー)" 
+                                    className="w-full pl-12 pr-4 py-3.5 rounded-xl text-slate-800 focus:outline-none focus:ring-4 focus:ring-secondary/50 shadow-md text-base"
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                />
+                                <i className="ph ph-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-2xl"></i>
+                            </div>
+                        </div>
+                        <i className="ph ph-books absolute -right-4 -bottom-10 text-9xl text-white opacity-10"></i>
+                    </div>
+
+                    <div className="space-y-4">
+                        {filteredQas.length === 0 ? (
+                            <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-slate-200">
+                                <i className="ph ph-ghost text-5xl text-slate-300 mb-4"></i>
+                                <h3 className="text-xl font-bold text-slate-700">該当する質問が見つかりませんでした</h3>
+                                <p className="text-slate-500 mt-2">キーワードを変更するか、まだQ&Aが登録されていません。</p>
+                            </div>
+                        ) : (
+                            filteredQas.map(qa => (
+                                <div key={qa.id} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+                                    <div className="flex justify-between items-start gap-4 mb-3">
+                                        <div className="flex-1">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <Badge color="blue">{qa.category}</Badge>
+                                                <span className="text-xs text-slate-500 flex items-center gap-1"><i className="ph ph-clock"></i> {qa.date}</span>
+                                            </div>
+                                            <h3 className="text-xl font-bold text-slate-800 leading-tight">{qa.title}</h3>
+                                        </div>
+                                        <button 
+                                            onClick={() => onLike(qa.id)}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-medium text-sm transition-all active:scale-95 ${
+                                                likedQaIds.includes(qa.id) 
+                                                ? "bg-blue-500 text-white border-blue-500 shadow-inner" 
+                                                : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                                            }`}
+                                            title={likedQaIds.includes(qa.id) ? "いいねを取り消す" : "役に立った！"}
+                                        >
+                                            <i className={likedQaIds.includes(qa.id) ? "ph-fill ph-thumbs-up" : "ph ph-thumbs-up"}></i> 
+                                            <span>{qa.likes || 0}</span>
+                                        </button>
+                                    </div>
+                                    <div className="bg-slate-50 p-4 rounded-xl text-slate-700 text-sm mb-3 border border-slate-100 whitespace-pre-wrap">
+                                        <span className="font-bold text-slate-500 block text-xs mb-1">質問内容:</span>
+                                        {qa.question}
+                                    </div>
+                                    <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-xl text-slate-800 text-sm">
+                                        <p className="font-bold text-emerald-800 flex items-center gap-1.5 text-xs mb-1">
+                                            <i className="ph-fill ph-check-circle text-emerald-600 text-base"></i> {qa.teacher}からの回答
+                                        </p>
+                                        <p className="whitespace-pre-wrap">{qa.answer}</p>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const ReservationView = ({ onReserve, onAskQuestion, teachers, slots, currentUser, onRequireLogin }) => {
+            const [mode, setMode] = useState("reserve");
+            const [selectedTeacher, setSelectedTeacher] = useState("all");
+            const [selectedSlot, setSelectedSlot] = useState(null);
+            
+            // 予約モーダル内の設定項目
+            const [resTeacher, setResTeacher] = useState("");
+            const [topic, setTopic] = useState("");
+            const [resStartTime, setResStartTime] = useState("");
+            const [resEndTime, setResEndTime] = useState("");
+            const [timeError, setTimeError] = useState("");
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [isSubmitting, setIsSubmitting] = useState(false);
+
+            const teacherNames = teachers.map(t => t.name || t);
+            const [qTeacher, setQTeacher] = useState(teacherNames[0] || "");
+            const [qCategory, setQCategory] = useState("未分類");
+            const [qTitle, setQTitle] = useState("");
+            const [qQuestion, setQQuestion] = useState("");
+
+            useEffect(() => {
+                if (teacherNames.length > 0 && !qTeacher) {
+                    setQTeacher(teacherNames[0]);
+                }
+            }, [teachers, qTeacher]);
+
+            const filterTeachers = ["all", ...teacherNames];
+
+            const filteredSlots = useMemo(() => {
+                return slots.filter(slot => {
+                    const matchTeacher = selectedTeacher === "all" || slot.teacher === selectedTeacher;
+                    return matchTeacher && slot.available;
+                });
+            }, [slots, selectedTeacher]);
+
+            const handleSlotClick = (slot) => {
+                if (!currentUser) {
+                    onRequireLogin();
+                    return;
+                }
+                setSelectedSlot(slot);
+                setResTeacher(slot.teacher || teacherNames[0] || "山田先生");
+                const [start, end] = slot.time.split(" - ");
+                setResStartTime(start || "09:00");
+                setResEndTime(end || "10:00");
+                setTimeError("");
+                setIsModalOpen(true);
+            };
+
+            const handleSubmitReserve = () => {
+                if (!currentUser) {
+                    onRequireLogin();
+                    return;
+                }
+                if(!topic.trim() || isSubmitting) return;
+
+                const [slotStart, slotEnd] = selectedSlot.time.split(" - ");
+                
+                if (resStartTime < slotStart || resEndTime > slotEnd || resStartTime >= resEndTime) {
+                    setTimeError(`先生の対応可能時間（${selectedSlot.time}）の範囲内で有効な時間帯を指定してください。`);
+                    return;
+                }
+
+                setIsSubmitting(true);
+                
+                onReserve({
+                    slotId: selectedSlot.id,
+                    topic: topic,
+                    teacher: resTeacher, // 選択された担当先生を確実に渡す
+                    datetime: `${selectedSlot.date} ${resStartTime} - ${resEndTime}`,
+                    reservedTime: `${resStartTime} - ${resEndTime}`
+                });
+                
+                setIsModalOpen(false);
+                setTopic("");
+                setSelectedSlot(null);
+                setTimeout(() => setIsSubmitting(false), 500);
+            };
+
+            const handleSubmitQuestion = (e) => {
+                e.preventDefault();
+                if (!currentUser) {
+                    onRequireLogin();
+                    return;
+                }
+                if (!qTitle.trim() || !qQuestion.trim() || !qTeacher) return;
+
+                onAskQuestion({
+                    teacher: qTeacher,
+                    category: qCategory,
+                    title: qTitle,
+                    question: qQuestion
+                });
+
+                setQTitle("");
+                setQQuestion("");
+            };
+
+            if (teacherNames.length === 0) {
+                return (
+                    <div className="text-center py-20 bg-white rounded-2xl shadow-sm border border-slate-200">
+                        <i className="ph ph-users-slash text-5xl text-slate-300 mb-4"></i>
+                        <h2 className="text-xl font-bold text-slate-700 mb-2">先生が登録されていません</h2>
+                        <p className="text-slate-500">右上「管理者・先生画面」から先生を追加してください。</p>
+                    </div>
+                );
+            }
+
+            if (!currentUser) {
+                return (
+                    <div className="fade-in bg-white p-10 rounded-2xl shadow-sm border border-slate-200 text-center max-w-lg mx-auto my-8">
+                        <div className="w-16 h-16 bg-indigo-50 text-primary rounded-full flex items-center justify-center mx-auto mb-4">
+                            <i className="ph ph-user-circle text-3xl"></i>
+                        </div>
+                        <h2 className="text-xl font-bold text-slate-800 mb-2">ログインが必要です</h2>
+                        <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+                            先生への面談予約および質問の送信機能を利用するには、お名前の登録（ログイン）が必要です。
+                        </p>
+                        <Button variant="primary" className="w-full py-3" onClick={onRequireLogin}>
+                            お名前を入力してログインする
+                        </Button>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="fade-in space-y-6">
+                    <div className="flex bg-slate-200/70 p-1.5 rounded-xl max-w-md mx-auto">
+                        <button 
+                            onClick={() => setMode("reserve")}
+                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${mode === "reserve" ? "bg-white text-primary shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                        >
+                            <i className="ph ph-calendar-plus text-lg"></i> 面談の予約
+                        </button>
+                        <button 
+                            onClick={() => setMode("question")}
+                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${mode === "question" ? "bg-white text-primary shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
+                        >
+                            <i className="ph ph-chat-teardrop-text text-lg"></i> テキスト質問を送信
+                        </button>
+                    </div>
+
+                    {mode === "reserve" ? (
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                                <i className="ph ph-calendar-plus text-primary text-2xl"></i>
+                                先生の空き時間を探して予約
+                            </h2>
+                            
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-slate-700 mb-2">先生を絞り込む</label>
+                                <select
+                                    className="w-full md:w-64 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white cursor-pointer text-sm"
+                                    value={selectedTeacher}
+                                    onChange={(e) => setSelectedTeacher(e.target.value)}
+                                >
+                                    {filterTeachers.map(t => (
+                                        <option key={t} value={t}>
+                                            {t === "all" ? "すべての先生" : t}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {filteredSlots.length === 0 ? (
+                                    <div className="col-span-full text-center py-12 text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                                        選択した先生の空き枠は現在ありません。
+                                    </div>
+                                ) : (
+                                    filteredSlots.map(slot => (
+                                        <div 
+                                            key={slot.id} 
+                                            onClick={() => handleSlotClick(slot)}
+                                            className="border-2 border-slate-100 p-4 rounded-xl hover:border-primary cursor-pointer transition-all group bg-white hover:shadow-md"
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
+                                                <span className="font-bold text-slate-800">{slot.teacher}</span>
+                                                <Badge color="green">予約可</Badge>
+                                            </div>
+                                            <div className="text-slate-600 text-sm space-y-1">
+                                                <p className="flex items-center gap-1.5"><i className="ph ph-calendar text-slate-400"></i> {slot.date}</p>
+                                                <p className="flex items-center gap-1.5"><i className="ph ph-clock text-slate-400"></i> {slot.time}</p>
+                                            </div>
+                                            <div className="mt-3">
+                                                <Button variant="outline" className="w-full text-xs py-1.5 group-hover:bg-primary group-hover:text-white">この枠を予約</Button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 max-w-2xl mx-auto">
+                            <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
+                                <i className="ph ph-paper-plane-tilt text-primary text-2xl"></i>
+                                先生に直接テキスト質問を送る
+                            </h2>
+                            <p className="text-slate-500 text-sm mb-6">
+                                質問を送信すると先生に届きます。先生が回答すると、Q&Aナレッジベースに掲載されます。
+                            </p>
+
+                            <form onSubmit={handleSubmitQuestion} className="space-y-4">
+                                <div className="grid md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">質問する先生 <span className="text-red-500">*</span></label>
+                                        <select 
+                                            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white text-sm"
+                                            value={qTeacher}
+                                            onChange={(e) => setQTeacher(e.target.value)}
+                                            required
+                                        >
+                                            {teacherNames.map((t, idx) => (
+                                                <option key={idx} value={t}>{t}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">カテゴリ</label>
+                                        <select 
+                                            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white text-sm"
+                                            value={qCategory}
+                                            onChange={(e) => setQCategory(e.target.value)}
+                                        >
+                                            <option value="未分類">未分類</option>
+                                            <option value="Java">Java</option>
+                                            <option value="React">React</option>
+                                            <option value="Git">Git</option>
+                                            <option value="就職活動">就職活動</option>
+                                            <option value="進路相談">進路相談</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">質問のタイトル <span className="text-red-500">*</span></label>
+                                    <input 
+                                        type="text" 
+                                        placeholder="例: ReactのuseEffectの実行タイミングについて" 
+                                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                        value={qTitle}
+                                        onChange={(e) => setQTitle(e.target.value)}
+                                        required
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">質問の詳細内容 <span className="text-red-500">*</span></label>
+                                    <textarea 
+                                        className="w-full border border-slate-300 rounded-lg p-3 h-36 focus:ring-2 focus:ring-primary outline-none resize-none text-sm"
+                                        placeholder="具体的に困っている点やエラーコードを入力してください"
+                                        value={qQuestion}
+                                        onChange={(e) => setQQuestion(e.target.value)}
+                                        required
+                                    ></textarea>
+                                </div>
+
+                                <Button type="submit" className="w-full" disabled={!qTitle.trim() || !qQuestion.trim()}>
+                                    <i className="ph ph-paper-plane-tilt"></i> 質問を送信する
+                                </Button>
+                            </form>
+                        </div>
+                    )}
+
+                    <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="相談予約の確認">
+                        {selectedSlot && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">担当教員 <span className="text-red-500">*</span></label>
+                                    <select 
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white text-sm font-semibold"
+                                        value={resTeacher}
+                                        onChange={(e) => setResTeacher(e.target.value)}
+                                    >
+                                        {teacherNames.map((t, idx) => (
+                                            <option key={idx} value={t}>{t}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="bg-slate-50 p-3 rounded-lg text-sm text-slate-700 space-y-1">
+                                    <p><strong>対応枠の日時:</strong> {selectedSlot.date} {selectedSlot.time}</p>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">希望開始時間 <span className="text-red-500">*</span></label>
+                                        <input 
+                                            type="time" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                            value={resStartTime}
+                                            onChange={(e) => { setResStartTime(e.target.value); setTimeError(""); }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">希望終了時間 <span className="text-red-500">*</span></label>
+                                        <input 
+                                            type="time" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                            value={resEndTime}
+                                            onChange={(e) => { setResEndTime(e.target.value); setTimeError(""); }}
+                                        />
+                                    </div>
+                                </div>
+                                {timeError && <p className="text-red-500 text-xs font-medium">{timeError}</p>}
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">事前相談内容 <span className="text-red-500">*</span></label>
+                                    <p className="text-xs text-slate-500 mb-2">何について聞きたいか事前に書いておくとスムーズです。</p>
+                                    <textarea 
+                                        className="w-full border border-slate-300 rounded-lg p-3 h-28 focus:ring-2 focus:ring-primary outline-none resize-none text-sm"
+                                        placeholder="例：Javaの演習課題でNullPointerExceptionが出ます。"
+                                        value={topic}
+                                        onChange={(e) => setTopic(e.target.value)}
+                                        disabled={isSubmitting}
+                                    ></textarea>
+                                </div>
+                                <div className="flex gap-2 pt-2">
+                                    <Button variant="ghost" className="w-full text-sm" onClick={() => setIsModalOpen(false)} disabled={isSubmitting}>キャンセル</Button>
+                                    <Button variant="primary" className="w-full text-sm" onClick={handleSubmitReserve} disabled={!topic.trim() || isSubmitting}>
+                                        {isSubmitting ? "送信中..." : "予約を確定する"}
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const TeacherDashboard = ({ reservations, questions, onApprove, onCompleteReservation, onDeleteReservation, onAnswerQuestion, onDeleteQuestion, onUpdateReservationTeacher, teachers, slots }) => {
+            const teacherNames = teachers.map(t => t.name || t);
+            const [selectedTeacher, setSelectedTeacher] = useState(teacherNames[0] || "");
+            const [answerModalTarget, setAnswerModalTarget] = useState(null);
+            const [answerText, setAnswerText] = useState("");
+
+            useEffect(() => {
+                if (teacherNames.length > 0 && !teacherNames.includes(selectedTeacher)) {
+                    setSelectedTeacher(teacherNames[0]);
+                }
+            }, [teachers]);
+
+            if (teacherNames.length === 0) {
+                return (
+                    <div className="text-center py-20 bg-white rounded-2xl shadow-sm border border-slate-200">
+                        <i className="ph ph-chalkboard-teacher text-5xl text-slate-300 mb-4"></i>
+                        <h2 className="text-xl font-bold text-slate-700 mb-2">登録されている先生がいません</h2>
+                        <p className="text-slate-500">「システム設定」タブから先生を追加してください。</p>
+                    </div>
+                );
+            }
+
+            const myReservations = reservations.filter(r => r.teacher === selectedTeacher);
+            const myQuestions = (questions || []).filter(q => q.teacher === selectedTeacher);
+
+            const handleOpenAnswerModal = (q) => {
+                setAnswerModalTarget(q);
+                setAnswerText("");
+            };
+
+            const handleSubmitAnswer = () => {
+                if (!answerText.trim() || !answerModalTarget) return;
+                onAnswerQuestion(answerModalTarget.id, answerText);
+                setAnswerModalTarget(null);
+                setAnswerText("");
+            };
+
+            return (
+                <div className="fade-in space-y-6">
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+                        <label className="font-bold text-slate-700 whitespace-nowrap text-sm">表示する先生:</label>
+                        <select 
+                            className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer"
+                            value={selectedTeacher}
+                            onChange={(e) => setSelectedTeacher(e.target.value)}
+                        >
+                            {teacherNames.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="bg-primary text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
+                        <div>
+                            <h2 className="text-2xl font-bold mb-1">先生用ダッシュボード</h2>
+                            <p className="text-indigo-100 opacity-90 text-sm">{selectedTeacher}、こんにちは。質問と面談予約を確認してください。</p>
+                        </div>
+                        <i className="ph ph-chalkboard-teacher text-5xl opacity-50"></i>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                            <h3 className="font-bold text-base text-slate-800 flex items-center gap-2">
+                                <i className="ph ph-chat-teardrop-text text-primary text-xl"></i> テキスト質問リクエスト
+                            </h3>
+                            <Badge color="amber">{myQuestions.filter(q => q.status === 'pending').length}件の未回答</Badge>
+                        </div>
+                        
+                        <div className="divide-y divide-slate-100">
+                            {myQuestions.length === 0 ? (
+                                <div className="p-8 text-center text-slate-500 text-sm">現在テキスト質問はありません。</div>
+                            ) : (
+                                myQuestions.map(q => (
+                                    <div key={q.id} className="p-6 hover:bg-slate-50 transition-colors flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
+                                        <div className="space-y-2 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                {q.status === 'pending' ? <Badge color="yellow">未回答</Badge> : <Badge color="green">回答済み (Q&A公開中)</Badge>}
+                                                <Badge color="blue">{q.category}</Badge>
+                                                <span className="text-xs text-slate-400"><i className="ph ph-clock"></i> {q.date}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 bg-indigo-50 px-3 py-1.5 rounded-lg w-fit">
+                                                <i className="ph-fill ph-user-circle text-base text-primary"></i>
+                                                <span>質問者: {q.student || '不明'} {q.studentEmail ? `(${q.studentEmail})` : ''}</span>
+                                            </div>
+                                            <h4 className="font-bold text-slate-800 text-base">{q.title}</h4>
+                                            <p className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200 whitespace-pre-wrap">{q.question}</p>
+                                            {q.status === 'answered' && (
+                                                <div className="text-sm bg-emerald-50 border border-emerald-200 p-3 rounded-lg text-slate-700 mt-2">
+                                                    <strong>回答:</strong> {q.answer}
+                                                </div>
+                                            )}
+                                        </div>
+                                        
+                                        <div className="flex gap-2 w-full md:w-auto mt-4 md:mt-0 shrink-0">
+                                            {q.status === 'pending' && (
+                                                <Button variant="primary" className="text-sm" onClick={() => handleOpenAnswerModal(q)}>
+                                                    <i className="ph ph-chat-centered-text"></i> 回答してQ&Aに載せる
+                                                </Button>
+                                            )}
+                                            <Button variant="danger" className="text-sm" onClick={() => onDeleteQuestion(q.id)}>
+                                                <i className="ph ph-trash"></i> 削除
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                            <h3 className="font-bold text-base text-slate-800 flex items-center gap-2">
+                                <i className="ph ph-calendar text-primary text-xl"></i> 面談予約管理 ({selectedTeacher})
+                            </h3>
+                            <Badge color="yellow">{myReservations.filter(r => r.status === 'pending').length}件の未承認</Badge>
+                        </div>
+                        
+                        <div className="divide-y divide-slate-100">
+                            {myReservations.length === 0 ? (
+                                <div className="p-8 text-center text-slate-500 text-sm">現在の予約リクエストはありません。</div>
+                            ) : (
+                                myReservations.map(res => {
+                                    const slot = slots.find(s => s.id === res.slotId) || { date: '不明', time: '不明' };
+                                    const displayTime = res.reservedTime || slot.time;
+                                    return (
+                                        <div key={res.id} className="p-6 hover:bg-slate-50 transition-colors flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
+                                            <div className="space-y-2 flex-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    {res.status === 'pending' && <Badge color="yellow">承認待ち</Badge>}
+                                                    {res.status === 'approved' && <Badge color="blue">承認済み</Badge>}
+                                                    {res.status === 'completed' && <Badge color="gray">面談完了</Badge>}
+                                                    
+                                                    {/* 担当先生を簡単に変更できるセレクト */}
+                                                    <div className="flex items-center gap-1.5 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 ml-auto md:ml-2">
+                                                        <span className="text-xs font-bold text-amber-800">担当教員変更:</span>
+                                                        <select
+                                                            value={res.teacher}
+                                                            onChange={(e) => onUpdateReservationTeacher(res.id, e.target.value)}
+                                                            className="text-xs font-bold text-slate-800 bg-white border border-slate-300 rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                                                        >
+                                                            {teacherNames.map(t => (
+                                                                <option key={t} value={t}>{t}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 bg-indigo-50 px-3 py-1.5 rounded-lg w-fit">
+                                                    <i className="ph-fill ph-user-circle text-base text-primary"></i>
+                                                    <span>予約者: {res.student || '不明'} {res.studentEmail ? `(${res.studentEmail})` : ''}</span>
+                                                </div>
+                                                <div className="text-sm text-slate-600 flex items-center gap-4">
+                                                    <span className="flex items-center gap-1"><i className="ph ph-calendar"></i> {slot.date || res.datetime}</span>
+                                                    <span className="flex items-center gap-1"><i className="ph ph-clock"></i> 希望時間: {displayTime}</span>
+                                                </div>
+                                                <div className="bg-white border border-slate-200 p-3 rounded-lg text-sm text-slate-700 whitespace-pre-wrap">
+                                                    <span className="font-bold text-xs text-slate-400 block mb-1">事前相談内容</span>
+                                                    {res.topic}
+                                                </div>
+                                            </div>
+                                            
+                                            <div className="flex gap-2 w-full md:w-auto mt-4 md:mt-0 shrink-0">
+                                                {res.status === 'pending' && (
+                                                    <Button variant="primary" className="flex-1 md:flex-none text-sm" onClick={() => onApprove(res.id)}>
+                                                        <i className="ph ph-check"></i> 承認する
+                                                    </Button>
+                                                )}
+                                                {res.status === 'approved' && (
+                                                    <>
+                                                        <a 
+                                                            href={generateGoogleCalendarUrl(`面談: ${res.student} (${res.teacher})`, slot.date || res.datetime.split(' ')[0], displayTime, res.topic)}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="flex-1 md:flex-none px-3 py-2 rounded-lg font-medium transition-colors duration-200 flex items-center justify-center gap-1.5 border-2 border-[#4285F4] text-[#4285F4] hover:bg-blue-50 text-xs"
+                                                        >
+                                                            <i className="ph ph-calendar text-base"></i> カレンダー登録
+                                                        </a>
+                                                        <Button variant="outline" className="flex-1 md:flex-none text-sm" onClick={() => onCompleteReservation(res.id)}>
+                                                            <i className="ph ph-check-circle"></i> 完了にする
+                                                        </Button>
+                                                    </>
+                                                )}
+                                                <Button variant="danger" className="flex-1 md:flex-none text-sm" onClick={() => onDeleteReservation(res.id)}>
+                                                    <i className="ph ph-trash"></i> 削除
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+
+                    <Modal isOpen={!!answerModalTarget} onClose={() => setAnswerModalTarget(null)} title="質問への回答入力">
+                        {answerModalTarget && (
+                            <div className="space-y-4">
+                                <div className="bg-slate-50 p-3 rounded-lg text-sm border border-slate-200">
+                                    <p className="font-bold text-slate-800">{answerModalTarget.title}</p>
+                                    <p className="text-slate-600 text-xs mt-1 whitespace-pre-wrap">{answerModalTarget.question}</p>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">回答内容 <span className="text-red-500">*</span></label>
+                                    <textarea 
+                                        className="w-full border border-slate-300 rounded-lg p-3 h-32 focus:ring-2 focus:ring-primary outline-none resize-none text-sm"
+                                        placeholder="生徒への回答を入力してください。この内容は回答後にQ&Aナレッジベースに公開されます。"
+                                        value={answerText}
+                                        onChange={(e) => setAnswerText(e.target.value)}
+                                    ></textarea>
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button variant="ghost" className="w-full text-sm" onClick={() => setAnswerModalTarget(null)}>キャンセル</Button>
+                                    <Button variant="primary" className="w-full text-sm" onClick={handleSubmitAnswer} disabled={!answerText.trim()}>回答を確定して公開</Button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const AdminView = ({ onAddTeacher, onDeleteTeacher, onAddSlot, onUpdateSlot, onDeleteSlot, teachers, slots, reservations, questions, qas, onDeleteQa, onDeleteQuestion, onApprove, onCompleteReservation, onDeleteReservation, onAnswerQuestion, onUpdateReservationTeacher, onShowToast }) => {
+            const [password, setPassword] = useState("");
+            const [isAuth, setIsAuth] = useState(false);
+            const [error, setError] = useState("");
+            const [newTeacherName, setNewTeacherName] = useState("");
+            const [activeAdminTab, setActiveAdminTab] = useState("system");
+
+            const teacherNames = teachers.map(t => t.name || t);
+            const [slotTeacher, setSlotTeacher] = useState("");
+            const [slotDate, setSlotDate] = useState(() => {
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                return tomorrow.toISOString().split('T')[0];
+            });
+            const [slotStartTime, setSlotStartTime] = useState("10:00");
+            const [slotEndTime, setSlotEndTime] = useState("11:00");
+
+            // --- スロット編集用 State ---
+            const [editingSlot, setEditingSlot] = useState(null);
+            const [editTeacher, setEditTeacher] = useState("");
+            const [editDate, setEditDate] = useState("");
+            const [editStartTime, setEditStartTime] = useState("");
+            const [editEndTime, setEditEndTime] = useState("");
+            const [editAvailable, setEditAvailable] = useState(true);
+
+            useEffect(() => {
+                if (teacherNames.length > 0 && !slotTeacher) {
+                    setSlotTeacher(teacherNames[0]);
+                }
+            }, [teachers, slotTeacher]);
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                if (password === "BIT3150" || password === "admin") {
+                    setIsAuth(true);
+                    setError("");
+                } else {
+                    setError("パスワードが違います (デフォルト: BIT3150 または admin)");
+                }
+            };
+
+            const handleAdd = async (e) => {
+                e.preventDefault();
+                if (newTeacherName.trim()) {
+                    const addedName = newTeacherName.trim();
+                    await onAddTeacher(addedName);
+                    setNewTeacherName("");
+                    // 新しい先生が登録された際、自動的にスロット登録の対象教員としてセットする
+                    setSlotTeacher(addedName);
+                }
+            };
+
+            const handleAddSlotSubmit = (e) => {
+                e.preventDefault();
+                if (slotStartTime >= slotEndTime) {
+                    if (onShowToast) onShowToast("終了時間は開始時間より後の時刻を指定してください");
+                    return;
+                }
+                if (slotTeacher && slotDate && slotStartTime && slotEndTime) {
+                    onAddSlot(slotTeacher, slotDate, `${slotStartTime} - ${slotEndTime}`);
+                }
+            };
+
+            // スロット編集モーダルを開く
+            const handleOpenEditSlot = (slot) => {
+                setEditingSlot(slot);
+                setEditTeacher(slot.teacher || teacherNames[0] || "");
+                setEditDate(slot.date || "");
+                const times = (slot.time || "10:00 - 11:00").split(" - ");
+                setEditStartTime(times[0] || "10:00");
+                setEditEndTime(times[1] || "11:00");
+                setEditAvailable(slot.available !== false);
+            };
+
+            // スロットの変更保存
+            const handleSaveEditedSlot = () => {
+                if (!editingSlot) return;
+                if (editStartTime >= editEndTime) {
+                    if (onShowToast) onShowToast("終了時間は開始時間より後の時刻を指定してください");
+                    return;
+                }
+
+                onUpdateSlot(editingSlot.id, {
+                    teacher: editTeacher,
+                    date: editDate,
+                    time: `${editStartTime} - ${editEndTime}`,
+                    available: editAvailable
+                });
+
+                setEditingSlot(null);
+            };
+
+            if (!isAuth) {
+                return (
+                    <div className="fade-in max-w-md mx-auto mt-6">
+                        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+                            <div className="text-center mb-6">
+                                <div className="bg-indigo-50 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 text-primary">
+                                    <i className="ph ph-lock-key text-3xl"></i>
+                                </div>
+                                <h2 className="text-xl font-bold text-slate-800">管理者・教員ログイン</h2>
+                            </div>
+                            <form onSubmit={handleLogin} className="space-y-4">
+                                <div>
+                                    <input 
+                                        type="password" 
+                                        placeholder="管理者パスワードを入力" 
+                                        className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                    />
+                                    {error && <p className="text-red-500 text-xs mt-1.5">{error}</p>}
+                                </div>
+                                <Button type="submit" className="w-full">ログイン</Button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="fade-in space-y-6">
+                    <div className="flex border-b border-slate-200 bg-white rounded-t-2xl px-2 pt-2 overflow-x-auto">
+                        <button
+                            onClick={() => setActiveAdminTab("system")}
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeAdminTab === "system" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                        >
+                            <i className="ph ph-gear text-lg"></i> システム設定 (先生・時間登録・変更)
+                        </button>
+                        <button
+                            onClick={() => setActiveAdminTab("teacher")}
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeAdminTab === "teacher" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                        >
+                            <i className="ph ph-chalkboard-teacher text-lg"></i> 先生ビュー (予約の確認・承認)
+                        </button>
+                        <button
+                            onClick={() => setActiveAdminTab("all_reservations")}
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeAdminTab === "all_reservations" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                        >
+                            <i className="ph ph-list-checks text-lg"></i> 全面談予約の一括変更
+                        </button>
+                        <button
+                            onClick={() => setActiveAdminTab("qa")}
+                            className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeAdminTab === "qa" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                        >
+                            <i className="ph ph-books text-lg"></i> Q&A管理
+                        </button>
+                    </div>
+
+                    <div className={activeAdminTab === "system" ? "block space-y-6" : "hidden"}>
+                        <div className="bg-slate-800 text-white p-6 rounded-2xl shadow-md flex items-center justify-between">
+                            <div>
+                                <h2 className="text-2xl font-bold mb-1">システム管理</h2>
+                                <p className="text-slate-300 text-sm">先生のアカウント（名前）や面談可能時間の登録・変更が行えます。</p>
+                            </div>
+                            <i className="ph ph-gear text-5xl opacity-40"></i>
+                        </div>
+
+                        <div className="grid md:grid-cols-2 gap-6">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                <h3 className="font-bold text-lg mb-4">先生の追加</h3>
+                                <form onSubmit={handleAdd} className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">先生の名前</label>
+                                        <input 
+                                            type="text" 
+                                            placeholder="例：田中先生" 
+                                            className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                            value={newTeacherName}
+                                            onChange={(e) => setNewTeacherName(e.target.value)}
+                                        />
+                                    </div>
+                                    <Button type="submit" disabled={!newTeacherName.trim()}>追加する</Button>
+                                </form>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                <h3 className="font-bold text-lg mb-4 flex justify-between items-center">
+                                    登録済みの先生 <Badge color="gray">{teachers.length}名</Badge>
+                                </h3>
+                                {teachers.length === 0 ? (
+                                    <p className="text-slate-500 text-sm text-center py-6 border-2 border-dashed border-slate-200 rounded-lg">
+                                        まだ誰も登録されていません
+                                    </p>
+                                ) : (
+                                    <ul className="divide-y divide-slate-100 max-h-48 overflow-y-auto pr-1">
+                                        {teachers.map((teacher) => {
+                                            const name = teacher.name || teacher;
+                                            const tId = teacher.id || name;
+                                            return (
+                                                <li key={tId} className="py-2.5 flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-8 h-8 rounded-full bg-indigo-100 text-primary flex items-center justify-center font-bold text-sm">
+                                                            {name.charAt(0)}
+                                                        </div>
+                                                        <span className="font-medium text-slate-700 text-sm">{name}</span>
+                                                    </div>
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={() => onDeleteTeacher(tId, name)}
+                                                        className="text-slate-400 hover:text-red-500 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                                                        title={`${name}を削除`}
+                                                    >
+                                                        <i className="ph ph-trash text-base"></i>
+                                                    </button>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                            </div>
+                        </div>
+                        
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4">空き時間（スロット）の新規登録</h3>
+                            {teachers.length === 0 ? (
+                                <p className="text-slate-500 text-sm py-4 border-2 border-dashed border-slate-200 rounded-lg text-center">
+                                    先に先生を追加してください
+                                </p>
+                            ) : (
+                                <form onSubmit={handleAddSlotSubmit} className="space-y-4">
+                                    <div className="grid md:grid-cols-4 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">対象の先生 <span className="text-red-500">*</span></label>
+                                            <select 
+                                                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white text-sm font-bold"
+                                                value={slotTeacher}
+                                                onChange={(e) => setSlotTeacher(e.target.value)}
+                                                required
+                                            >
+                                                {teacherNames.map((t, idx) => (
+                                                    <option key={idx} value={t}>{t}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">日付</label>
+                                            <input 
+                                                type="date" 
+                                                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                                value={slotDate}
+                                                onChange={(e) => setSlotDate(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">開始時間</label>
+                                            <input 
+                                                type="time" 
+                                                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                                value={slotStartTime}
+                                                onChange={(e) => setSlotStartTime(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-slate-700 mb-1">終了時間</label>
+                                            <input 
+                                                type="time" 
+                                                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                                value={slotEndTime}
+                                                onChange={(e) => setSlotEndTime(e.target.value)}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-3">
+                                        <Button type="submit">この枠を登録する</Button>
+                                    </div>
+                                </form>
+                            )}
+                            
+                            {/* 登録済み空き時間の管理（変更・削除）一覧 */}
+                            <div className="mt-8 border-t border-slate-100 pt-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h4 className="font-bold text-base text-slate-800 flex items-center gap-2">
+                                        <i className="ph ph-clock-afternoon text-primary text-xl"></i>
+                                        登録済みの空き時間一覧・変更
+                                    </h4>
+                                    <Badge color="blue">{slots.length}件の登録枠</Badge>
+                                </div>
+
+                                {slots.length === 0 ? (
+                                    <p className="text-slate-400 text-sm text-center py-6 border border-dashed border-slate-200 rounded-xl">
+                                        登録された空き時間枠はまだありません。
+                                    </p>
+                                ) : (
+                                    <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                                        <table className="w-full text-left text-sm text-slate-600">
+                                            <thead className="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                                                <tr>
+                                                    <th className="px-4 py-3">担当教員</th>
+                                                    <th className="px-4 py-3">日付</th>
+                                                    <th className="px-4 py-3">時間帯</th>
+                                                    <th className="px-4 py-3">ステータス</th>
+                                                    <th className="px-4 py-3 text-right">操作</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 bg-white">
+                                                {slots.map(s => (
+                                                    <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
+                                                        <td className="px-4 py-3 font-semibold text-slate-800">{s.teacher}</td>
+                                                        <td className="px-4 py-3 whitespace-nowrap">{s.date}</td>
+                                                        <td className="px-4 py-3 font-mono font-medium whitespace-nowrap">{s.time}</td>
+                                                        <td className="px-4 py-3">
+                                                            {s.available ? (
+                                                                <Badge color="green">予約可</Badge>
+                                                            ) : (
+                                                                <Badge color="gray">予約済 / 停止</Badge>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right whitespace-nowrap">
+                                                            <div className="flex items-center justify-end gap-2">
+                                                                <button
+                                                                    onClick={() => handleOpenEditSlot(s)}
+                                                                    className="px-2.5 py-1 text-xs font-bold bg-indigo-50 text-primary hover:bg-primary hover:text-white rounded-lg transition-colors flex items-center gap-1"
+                                                                    title="担当先生・日時・時間を変更"
+                                                                >
+                                                                    <i className="ph ph-pencil-simple text-sm"></i> 変更
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => onDeleteSlot(s.id)}
+                                                                    className="px-2 py-1 text-xs text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                                                    title="この空き枠を削除"
+                                                                >
+                                                                    <i className="ph ph-trash text-sm"></i> 削除
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className={activeAdminTab === "teacher" ? "block" : "hidden"}>
+                        <TeacherDashboard 
+                            reservations={reservations} 
+                            questions={questions}
+                            onApprove={onApprove} 
+                            onCompleteReservation={onCompleteReservation} 
+                            onDeleteReservation={onDeleteReservation}
+                            onAnswerQuestion={onAnswerQuestion}
+                            onDeleteQuestion={onDeleteQuestion}
+                            onUpdateReservationTeacher={onUpdateReservationTeacher}
+                            teachers={teachers} 
+                            slots={slots} 
+                        />
+                    </div>
+
+                    {/* 全予約の担当教員一括変更タブ */}
+                    <div className={activeAdminTab === "all_reservations" ? "block space-y-6" : "hidden"}>
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-2 text-slate-800 flex items-center gap-2">
+                                <i className="ph ph-arrows-clockwise text-primary text-xl"></i> 全面談予約の担当教員一覧・即時変更
+                            </h3>
+                            <p className="text-slate-500 text-sm mb-6">
+                                登録されたすべての予約データを一覧表示しています。誤って「山田先生」等で予約されてしまった場合も、以下のドロップダウンから正しい担当教員に直接変更できます。
+                            </p>
+
+                            {reservations.length === 0 ? (
+                                <p className="text-slate-400 text-sm text-center py-8 border border-dashed border-slate-200 rounded-xl">
+                                    現在登録されている予約はありません。
+                                </p>
+                            ) : (
+                                <div className="space-y-4">
+                                    {reservations.map(res => (
+                                        <div key={res.id} className="p-4 border border-slate-200 rounded-xl bg-white shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                            <div className="space-y-1.5 flex-1">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="font-bold text-slate-800 text-sm">予約者: {res.student}</span>
+                                                    {res.status === 'pending' && <Badge color="yellow">承認待ち</Badge>}
+                                                    {res.status === 'approved' && <Badge color="green">承認済み</Badge>}
+                                                    {res.status === 'completed' && <Badge color="gray">面談完了</Badge>}
+                                                </div>
+                                                <p className="text-xs text-slate-500"><i className="ph ph-calendar"></i> 日時: {res.datetime}</p>
+                                                <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded border border-slate-100">内容: {res.topic}</p>
+                                            </div>
+
+                                            <div className="flex items-center gap-3 shrink-0 bg-indigo-50/60 p-3 rounded-xl border border-indigo-100">
+                                                <label className="text-xs font-bold text-indigo-900 whitespace-nowrap">担当教員を変更:</label>
+                                                <select
+                                                    value={res.teacher}
+                                                    onChange={(e) => onUpdateReservationTeacher(res.id, e.target.value)}
+                                                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-bold bg-white focus:ring-2 focus:ring-primary outline-none cursor-pointer"
+                                                >
+                                                    {teacherNames.map(t => (
+                                                        <option key={t} value={t}>{t}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {activeAdminTab === "qa" && (
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                            <h3 className="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2">
+                                <i className="ph ph-books text-primary text-xl"></i> Q&Aナレッジベース管理
+                            </h3>
+                            {qas.length === 0 ? (
+                                <p className="text-slate-500 text-sm py-8 text-center border-2 border-dashed border-slate-200 rounded-xl">
+                                    Q&Aナレッジベースに登録されているデータはありません。
+                                </p>
+                            ) : (
+                                <div className="space-y-4">
+                                    {qas.map(qa => (
+                                        <div key={qa.id} className="p-4 border border-slate-200 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-slate-300">
+                                            <div className="space-y-1 flex-1">
+                                                <div className="flex items-center gap-2">
+                                                    <Badge color="blue">{qa.category}</Badge>
+                                                    <span className="text-xs text-slate-400">{qa.date} - 担当: {qa.teacher}</span>
+                                                </div>
+                                                <h4 className="font-bold text-slate-800 text-sm">{qa.title}</h4>
+                                                <p className="text-xs text-slate-600 line-clamp-2">{qa.question}</p>
+                                            </div>
+                                            <Button variant="danger" className="text-xs py-1.5 px-3 shrink-0" onClick={() => onDeleteQa(qa.id)}>
+                                                <i className="ph ph-trash"></i> Q&Aから削除
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* スロット時間・内容変更用モーダル */}
+                    <Modal isOpen={!!editingSlot} onClose={() => setEditingSlot(null)} title="空き時間の変更">
+                        {editingSlot && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">対象の先生 <span className="text-red-500">*</span></label>
+                                    <select 
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none bg-white text-sm font-bold"
+                                        value={editTeacher}
+                                        onChange={(e) => setEditTeacher(e.target.value)}
+                                    >
+                                        {teacherNames.map((t, idx) => (
+                                            <option key={idx} value={t}>{t}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">日付 <span className="text-red-500">*</span></label>
+                                    <input 
+                                        type="date" 
+                                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                        value={editDate}
+                                        onChange={(e) => setEditDate(e.target.value)}
+                                        required
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">開始時間 <span className="text-red-500">*</span></label>
+                                        <input 
+                                            type="time" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                            value={editStartTime}
+                                            onChange={(e) => setEditStartTime(e.target.value)}
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-700 mb-1">終了時間 <span className="text-red-500">*</span></label>
+                                        <input 
+                                            type="time" 
+                                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                            value={editEndTime}
+                                            onChange={(e) => setEditEndTime(e.target.value)}
+                                            required
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-700 mb-1">予約可否ステータス</label>
+                                    <div className="flex items-center gap-4 mt-1">
+                                        <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700">
+                                            <input 
+                                                type="radio" 
+                                                name="slotStatus"
+                                                checked={editAvailable === true}
+                                                onChange={() => setEditAvailable(true)}
+                                                className="text-primary focus:ring-primary"
+                                            />
+                                            <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">予約可能</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700">
+                                            <input 
+                                                type="radio" 
+                                                name="slotStatus"
+                                                checked={editAvailable === false}
+                                                onChange={() => setEditAvailable(false)}
+                                                className="text-primary focus:ring-primary"
+                                            />
+                                            <span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full font-bold">予約停止 / 予約済</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2 pt-3 border-t border-slate-100">
+                                    <Button variant="ghost" className="w-full text-sm" onClick={() => setEditingSlot(null)}>キャンセル</Button>
+                                    <Button variant="primary" className="w-full text-sm" onClick={handleSaveEditedSlot}>
+                                        <i className="ph ph-check-bold"></i> 変更内容を保存
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </Modal>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState("qa");
+            const [role, setRole] = useState("student");
+            
+            const [currentUser, setCurrentUser] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('askbridge_user');
+                    return saved ? JSON.parse(saved) : null;
+                } catch(e) { return null; }
+            });
+
+            const [loginName, setLoginName] = useState("");
+            const [loginEmail, setLoginEmail] = useState("");
+            const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+            const [isSyncing, setIsSyncing] = useState(true);
+
+            const [teachers, setTeachers] = useState([]);
+            const [slots, setSlots] = useState([]);
+            const [reservations, setReservations] = useState([]);
+            const [questions, setQuestions] = useState([]);
+            const [qas, setQas] = useState([]);
+
+            const [likedQaIds, setLikedQaIds] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('askbridge_liked_qas');
+                    return saved ? JSON.parse(saved) : [];
+                } catch(e) { return []; }
+            });
+
+            useEffect(() => {
+                if (currentUser) {
+                    localStorage.setItem('askbridge_user', JSON.stringify(currentUser));
+                } else {
+                    localStorage.removeItem('askbridge_user');
+                }
+            }, [currentUser]);
+
+            useEffect(() => {
+                localStorage.setItem('askbridge_liked_qas', JSON.stringify(likedQaIds));
+            }, [likedQaIds]);
+
+            useEffect(() => {
+                let unsubs = [];
+                const setupDataSync = () => {
+                    if (window.dbServices) {
+                        const unsubTeachers = window.dbServices.subscribe('teachers', (data) => setTeachers(data));
+                        const unsubSlots = window.dbServices.subscribe('slots', (data) => setSlots(data));
+                        const unsubRes = window.dbServices.subscribe('reservations', (data) => setReservations(data));
+                        const unsubQ = window.dbServices.subscribe('questions', (data) => setQuestions(data));
+                        const unsubQa = window.dbServices.subscribe('qas', (data) => setQas(data));
+
+                        unsubs = [unsubTeachers, unsubSlots, unsubRes, unsubQ, unsubQa];
+                        setIsSyncing(false);
+                    }
+                };
+
+                if (window.firebaseAuthReady) {
+                    window.firebaseAuthReady.then(setupDataSync).catch(setupDataSync);
+                } else {
+                    setupDataSync();
+                }
+
+                return () => {
+                    unsubs.forEach(unsub => unsub && unsub());
+                };
+            }, []);
+
+            const handleSimpleLogin = (e) => {
+                e.preventDefault();
+                if (!loginName.trim()) return;
+
+                const user = {
+                    id: currentUser?.id || `user_${Date.now()}`,
+                    name: loginName.trim(),
+                    email: loginEmail.trim() || `${loginName.trim()}@student.local`
+                };
+
+                setCurrentUser(user);
+                setIsLoginModalOpen(false);
+                showToast(`${user.name}さんとしてログインしました`);
+            };
+
+            const handleLogout = () => {
+                setCurrentUser(null);
+                setLoginName("");
+                setLoginEmail("");
+                showToast("ログアウトしました");
+            };
+
+            const [toastMessage, setToastMessage] = useState(null);
+
+            const showToast = (message) => {
+                setToastMessage(message);
+                setTimeout(() => setToastMessage(null), 3000);
+            };
+
+            const handleLike = async (id) => {
+                if (!currentUser) {
+                    showToast("Q&Aへの「いいね」にはログインが必要です");
+                    setIsLoginModalOpen(true);
+                    return;
+                }
+                const targetQa = qas.find(q => q.id === id);
+                if (!targetQa) return;
+
+                if (likedQaIds.includes(id)) {
+                    setLikedQaIds(likedQaIds.filter(qId => qId !== id));
+                    await window.dbServices.update('qas', id, { likes: Math.max(0, (targetQa.likes || 1) - 1) });
+                } else {
+                    setLikedQaIds([...likedQaIds, id]);
+                    await window.dbServices.update('qas', id, { likes: (targetQa.likes || 0) + 1 });
+                }
+            };
+
+            const handleAddTeacher = async (name) => {
+                const existingNames = teachers.map(t => t.name || t);
+                if (existingNames.includes(name)) {
+                    showToast("その先生は既に登録されています");
+                    return;
+                }
+                const docId = `teacher_${Date.now()}`;
+                await window.dbServices.set('teachers', docId, { id: docId, name });
+                showToast(`${name}を追加しました。`);
+            };
+
+            const handleDeleteTeacher = async (id, name) => {
+                await window.dbServices.delete('teachers', id);
+                const relatedSlots = slots.filter(s => s.teacher === name);
+                for (let s of relatedSlots) {
+                    await window.dbServices.delete('slots', s.id);
+                }
+                showToast(`${name}を削除しました`);
+            };
+
+            const handleAddSlot = async (teacher, date, time) => {
+                const isDuplicate = slots.some(slot => 
+                    slot.teacher === teacher && 
+                    slot.date === date && 
+                    slot.time === time
+                );
+                
+                if (isDuplicate) {
+                    showToast("その日時の空き枠はすでに登録されています");
+                    return;
+                }
+
+                const docId = `slot_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+                const newSlot = {
+                    id: docId,
+                    teacher,
+                    date,
+                    time,
+                    available: true
+                };
+                await window.dbServices.set('slots', docId, newSlot);
+                showToast(`${teacher}の空き枠（${date} ${time}）を追加しました。`);
+            };
+
+            // 管理者側でのスロット時間・情報の変更処理
+            const handleUpdateSlot = async (slotId, updatedData) => {
+                await window.dbServices.update('slots', slotId, updatedData);
+                showToast("登録枠の情報を更新しました。");
+            };
+
+            // 既存の面談予約の担当教員を変更する処理
+            const handleUpdateReservationTeacher = async (resId, newTeacher) => {
+                await window.dbServices.update('reservations', resId, { teacher: newTeacher });
+                showToast(`予約の担当教員を「${newTeacher}」に変更しました。`);
+            };
+
+            const handleReserve = async (data) => {
+                if (!currentUser) {
+                    showToast("予約を行うにはログインが必要です");
+                    setIsLoginModalOpen(true);
+                    return;
+                }
+                const isAlreadyReserved = reservations.some(r => r.slotId === data.slotId);
+                const targetSlot = slots.find(s => s.id === data.slotId);
+                
+                if (isAlreadyReserved || (targetSlot && !targetSlot.available)) {
+                    showToast("この枠はすでに予約されています。別の枠を選択してください。");
+                    return;
+                }
+
+                const resId = `res_${Date.now()}`;
+                const newReservation = {
+                    id: resId,
+                    student: currentUser.name,
+                    studentEmail: currentUser.email,
+                    studentId: currentUser.id,
+                    slotId: data.slotId,
+                    teacher: data.teacher, // 選択された担当先生を保存
+                    topic: data.topic,
+                    datetime: data.datetime,
+                    reservedTime: data.reservedTime,
+                    status: "pending"
+                };
+
+                const [slotStart, slotEnd] = targetSlot.time.split(" - ");
+                const [resStart, resEnd] = data.reservedTime.split(" - ");
+
+                await window.dbServices.update('slots', data.slotId, { time: data.reservedTime, available: false });
+
+                if (slotStart < resStart) {
+                    const extraSlotId1 = `slot_${Date.now()}_1`;
+                    await window.dbServices.set('slots', extraSlotId1, {
+                        id: extraSlotId1,
+                        teacher: targetSlot.teacher,
+                        date: targetSlot.date,
+                        time: `${slotStart} - ${resStart}`,
+                        available: true
+                    });
+                }
+
+                if (resEnd < slotEnd) {
+                    const extraSlotId2 = `slot_${Date.now()}_2`;
+                    await window.dbServices.set('slots', extraSlotId2, {
+                        id: extraSlotId2,
+                        teacher: targetSlot.teacher,
+                        date: targetSlot.date,
+                        time: `${resEnd} - ${slotEnd}`,
+                        available: true
+                    });
+                }
+
+                await window.dbServices.set('reservations', resId, newReservation);
+                showToast(`予約リクエストを送信しました！ (${data.teacher} ${data.datetime})`);
+            };
+
+            const handleAskQuestion = async (data) => {
+                if (!currentUser) {
+                    showToast("質問を送信するにはログインが必要です");
+                    setIsLoginModalOpen(true);
+                    return;
+                }
+                const qId = `q_${Date.now()}`;
+                const newQuestion = {
+                    id: qId,
+                    student: currentUser.name,
+                    studentEmail: currentUser.email,
+                    studentId: currentUser.id,
+                    teacher: data.teacher,
+                    category: data.category || "未分類",
+                    title: data.title,
+                    question: data.question,
+                    status: "pending",
+                    date: new Date().toISOString().split('T')[0]
+                };
+                await window.dbServices.set('questions', qId, newQuestion);
+                showToast(`${data.teacher}へテキスト質問を送信しました！`);
+            };
+
+            const handleApprove = async (id) => {
+                await window.dbServices.update('reservations', id, { status: 'approved' });
+                showToast("予約を承認しました。");
+            };
+
+            const handleCompleteReservation = async (id) => {
+                await window.dbServices.update('reservations', id, { status: 'completed' });
+                showToast("面談対応を完了にしました。");
+            };
+
+            const handleAnswerQuestion = async (questionId, answerText) => {
+                const targetQ = questions.find(q => q.id === questionId);
+                if (!targetQ) return;
+
+                await window.dbServices.update('questions', questionId, { status: 'answered', answer: answerText });
+
+                const qaId = `qa_${Date.now()}`;
+                const newQa = {
+                    id: qaId,
+                    category: targetQ.category,
+                    title: targetQ.title,
+                    question: targetQ.question,
+                    answer: answerText,
+                    teacher: targetQ.teacher,
+                    date: new Date().toISOString().split('T')[0],
+                    likes: 0
+                };
+                await window.dbServices.set('qas', qaId, newQa);
+                showToast("質問に回答し、Q&Aナレッジベースに公開しました。");
+            };
+
+            const handleDeleteQuestion = async (id) => {
+                await window.dbServices.delete('questions', id);
+                showToast("質問を削除しました");
+            };
+
+            const handleDeleteReservation = async (id) => {
+                await window.dbServices.delete('reservations', id);
+                showToast("予約を削除しました");
+            };
+
+            const handleDeleteSlot = async (id) => {
+                await window.dbServices.delete('slots', id);
+                showToast("空き時間を削除しました");
+            };
+
+            const handleDeleteQa = async (id) => {
+                await window.dbServices.delete('qas', id);
+                showToast("Q&Aを削除しました");
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-100">
+                    {toastMessage && (
+                        <div className="fixed top-4 right-4 bg-slate-800 text-white px-5 py-3 rounded-xl shadow-xl z-50 fade-in flex items-center gap-2 text-sm font-medium">
+                            <i className="ph-fill ph-check-circle text-secondary text-xl"></i>
+                            {toastMessage}
+                        </div>
+                    )}
+
+                    <header className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-30">
+                        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                                <div className="bg-primary text-white p-2 rounded-xl flex items-center justify-center">
+                                    <i className="ph ph-bridges text-2xl"></i>
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-black text-slate-800 tracking-tight leading-none">AskBridge</h1>
+                                    <span className="text-[10px] text-slate-400 font-semibold tracking-wider flex items-center gap-1">
+                                        TEACHER QA & SCHEDULE 
+                                        {isSyncing ? (
+                                            <span className="text-amber-500 animate-pulse">● 同期中...</span>
+                                        ) : (
+                                            <span className="text-emerald-500">● リアルタイム同期中</span>
+                                        )}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                                {currentUser ? (
+                                    <div className="flex items-center gap-2 border-r border-slate-200 pr-3">
+                                        <div className="w-8 h-8 rounded-full bg-indigo-100 text-primary font-bold flex items-center justify-center text-xs border">
+                                            {currentUser.name.charAt(0)}
+                                        </div>
+                                        <div className="hidden sm:block text-left">
+                                            <p className="text-xs font-bold text-slate-800 leading-none">{currentUser.name}</p>
+                                            <p className="text-[10px] text-slate-400">{currentUser.email}</p>
+                                        </div>
+                                        <button 
+                                            onClick={handleLogout}
+                                            className="text-xs text-slate-500 hover:text-red-500 ml-1 p-1"
+                                            title="ログアウト"
+                                        >
+                                            <i className="ph ph-sign-out text-lg"></i>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button 
+                                        onClick={() => {
+                                            setLoginName("");
+                                            setLoginEmail("");
+                                            setIsLoginModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary hover:bg-indigo-50 text-xs sm:text-sm font-medium text-primary shadow-sm transition-all"
+                                    >
+                                        <i className="ph ph-user-circle text-base"></i>
+                                        <span>ログイン / 登録</span>
+                                    </button>
+                                )}
+
+                                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                                    <button 
+                                        onClick={() => { setRole("student"); setActiveTab("qa"); }}
+                                        className={`px-3 py-1.5 text-xs sm:text-sm font-bold rounded-lg transition-all ${role === "student" ? "bg-white shadow-sm text-primary" : "text-slate-500 hover:text-slate-700"}`}
+                                    >
+                                        学生ビュー
+                                    </button>
+                                    <button 
+                                        onClick={() => { setRole("admin"); setActiveTab("admin"); }}
+                                        className={`px-3 py-1.5 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center gap-1 ${role === "admin" ? "bg-slate-800 shadow-sm text-white" : "text-slate-500 hover:text-slate-700"}`}
+                                    >
+                                        <i className="ph-fill ph-lock-key"></i> 管理者・先生画面
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-8">
+                        {role === "student" && (
+                            <div className="flex border-b border-slate-200 mb-8 overflow-x-auto">
+                                <button 
+                                    onClick={() => setActiveTab("qa")}
+                                    className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === "qa" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"}`}
+                                >
+                                    <i className="ph ph-books text-lg"></i> Q&Aナレッジベース
+                                </button>
+                                <button 
+                                    onClick={() => setActiveTab("reserve")}
+                                    className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === "reserve" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"}`}
+                                >
+                                    <i className="ph ph-calendar-plus text-lg"></i> 先生に質問・予約する
+                                </button>
+                                <button 
+                                    onClick={() => setActiveTab("mypage")}
+                                    className={`px-6 py-3 text-sm font-bold border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${activeTab === "mypage" ? "border-primary text-primary" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300"}`}
+                                >
+                                    <i className="ph ph-user text-lg"></i> マイページ (自分の予約・履歴)
+                                </button>
+                            </div>
+                        )}
+
+                        {role === "student" && activeTab === "qa" && (
+                            <QAView qas={qas} onLike={handleLike} likedQaIds={likedQaIds} />
+                        )}
+
+                        {role === "student" && activeTab === "reserve" && (
+                            <ReservationView 
+                                onReserve={handleReserve}
+                                onAskQuestion={handleAskQuestion}
+                                teachers={teachers}
+                                slots={slots}
+                                currentUser={currentUser}
+                                onRequireLogin={() => setIsLoginModalOpen(true)}
+                            />
+                        )}
+
+                        {role === "student" && activeTab === "mypage" && (
+                            <MyPageView 
+                                currentUser={currentUser}
+                                reservations={reservations}
+                                questions={questions}
+                                onDeleteReservation={handleDeleteReservation}
+                                onDeleteQuestion={handleDeleteQuestion}
+                                onRequireLogin={() => setIsLoginModalOpen(true)}
+                            />
+                        )}
+
+                        {role === "admin" && (
+                            <AdminView 
+                                onAddTeacher={handleAddTeacher}
+                                onDeleteTeacher={handleDeleteTeacher}
+                                onAddSlot={handleAddSlot}
+                                onUpdateSlot={handleUpdateSlot}
+                                onDeleteSlot={handleDeleteSlot}
+                                teachers={teachers}
+                                slots={slots}
+                                reservations={reservations}
+                                questions={questions}
+                                qas={qas}
+                                onDeleteQa={handleDeleteQa}
+                                onDeleteQuestion={handleDeleteQuestion}
+                                onApprove={handleApprove}
+                                onCompleteReservation={handleCompleteReservation}
+                                onDeleteReservation={handleDeleteReservation}
+                                onAnswerQuestion={handleAnswerQuestion}
+                                onUpdateReservationTeacher={handleUpdateReservationTeacher}
+                                onShowToast={showToast}
+                            />
+                        )}
+                    </main>
+
+                    <Modal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} title="学生ログイン / お名前の登録">
+                        <form onSubmit={handleSimpleLogin} className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">お名前 (氏名) <span className="text-red-500">*</span></label>
+                                <input 
+                                    type="text" 
+                                    placeholder="例：山田 太郎" 
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                    value={loginName}
+                                    onChange={(e) => setLoginName(e.target.value)}
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 mb-1">メールアドレス (任意)</label>
+                                <input 
+                                    type="email" 
+                                    placeholder="例：taro@example.com" 
+                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary outline-none text-sm"
+                                    value={loginEmail}
+                                    onChange={(e) => setLoginEmail(e.target.value)}
+                                />
+                            </div>
+                            <div className="pt-2 flex gap-2">
+                                <Button variant="ghost" className="w-full text-sm" onClick={() => setIsLoginModalOpen(false)}>キャンセル</Button>
+                                <Button type="submit" className="w-full text-sm" disabled={!loginName.trim()}>ログインする</Button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-400 mt-12">
+                        &copy; 2026 AskBridge - 先生への質問・面談予約システム
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
